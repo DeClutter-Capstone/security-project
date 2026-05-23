@@ -59,8 +59,28 @@
       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
 
     let activePeer = null;
-    let usersCache = [];
     let ws = null;
+
+    // Sidebar is built ONLY from conversation history + manually added users.
+    let conversationUsers = []; // [{username, online}] from GET /conversations
+    let addedUsers = loadAddedUsers(); // {username: {online}} persisted per user
+    let searchDirectory = []; // results of GET /users, used by + search only
+
+    // In-memory image caches so images appear without re-fetching/flicker.
+    const sentImageCache = {}; // message_id -> original data URL (this session)
+    const receivedImageCache = {}; // message_id -> base64 jpeg of decrypted image
+    const decrypting = new Set(); // message_ids currently being auto-opened
+
+    function loadAddedUsers() {
+      try {
+        return JSON.parse(sessionStorage.getItem("added_" + me)) || {};
+      } catch (e) {
+        return {};
+      }
+    }
+    function saveAddedUsers() {
+      sessionStorage.setItem("added_" + me, JSON.stringify(addedUsers));
+    }
 
     function avatarColor(name) {
       let sum = 0;
@@ -75,12 +95,27 @@
       );
     }
 
-    // ---------------- Sidebar / users ----------------
-    async function loadUsers() {
-      const res = await apiFetch("/users");
-      usersCache = await res.json();
-      renderUserList(usersCache);
+    // ---------------- Sidebar ----------------
+    // Only conversation users + manually added users are ever shown here.
+    async function loadConversations() {
+      const res = await apiFetch("/conversations");
+      conversationUsers = await res.json();
+      renderSidebar();
       updateHeaderStatus();
+    }
+
+    function sidebarUsers() {
+      // Merge: conversation users (authoritative online) + added-only users.
+      const map = {};
+      conversationUsers.forEach((u) => (map[u.username] = { username: u.username, online: u.online }));
+      Object.keys(addedUsers).forEach((name) => {
+        if (!map[name]) map[name] = { username: name, online: !!addedUsers[name].online };
+      });
+      return Object.values(map);
+    }
+
+    function renderSidebar() {
+      renderUserList(sidebarUsers());
     }
 
     function renderUserList(users) {
@@ -102,12 +137,15 @@
     }
 
     function peerInfo(username) {
-      return usersCache.find((u) => u.username === username);
+      return (
+        conversationUsers.find((u) => u.username === username) ||
+        (addedUsers[username] ? { username, online: !!addedUsers[username].online } : null)
+      );
     }
 
     function selectPeer(username) {
       activePeer = username;
-      renderUserList(usersCache);
+      renderSidebar();
       const header = document.getElementById("chat-header");
       header.style.display = "flex";
       document.getElementById("composer").style.display = "flex";
@@ -130,16 +168,21 @@
         `</div>`;
     }
 
-    // ---------------- Search ----------------
-    function toggleSearch() {
+    // ---------------- Search (the only place GET /users is used) ----------------
+    async function toggleSearch() {
       const panel = document.getElementById("search-panel");
       panel.classList.toggle("open");
       if (panel.classList.contains("open")) {
+        // Load the directory of existing usernames to check against.
+        try {
+          searchDirectory = await (await apiFetch("/users")).json();
+        } catch (e) {
+          searchDirectory = [];
+        }
         document.getElementById("search-input").focus();
       } else {
         document.getElementById("search-input").value = "";
         document.getElementById("search-result").innerHTML = "";
-        renderUserList(usersCache);
       }
     }
 
@@ -148,23 +191,26 @@
       const result = document.getElementById("search-result");
       if (!q) {
         result.innerHTML = "";
-        renderUserList(usersCache);
         return;
       }
-      const matches = usersCache.filter((u) => u.username.toLowerCase().includes(q));
-      renderUserList(matches);
-      const exact = usersCache.find((u) => u.username.toLowerCase() === q) || matches[0];
+      const exact =
+        searchDirectory.find((u) => u.username.toLowerCase() === q) ||
+        searchDirectory.find((u) => u.username.toLowerCase().includes(q));
       if (exact) {
         result.innerHTML =
           `<span class="check">✓</span><span>${exact.username}</span>` +
-          `<button class="add-pill" onclick="openFromSearch('${exact.username}')">Add</button>`;
+          `<button class="add-pill" onclick="addUser('${exact.username}')">Add</button>`;
       } else {
         result.innerHTML = "No user found";
       }
     }
 
-    function openFromSearch(username) {
+    function addUser(username) {
+      const info = searchDirectory.find((u) => u.username === username);
+      addedUsers[username] = { online: info ? !!info.online : false };
+      saveAddedUsers();
       toggleSearch();
+      renderSidebar();
       selectPeer(username);
     }
 
@@ -214,7 +260,12 @@
       bubble.className = "bubble " + (m.is_mine ? "sent" : "received");
 
       if (m.is_mine) {
-        bubble.innerHTML = `<span class="img-label">${IMG_ICON} Image</span>`;
+        // Show the actual sent image (cached from this session). No "Image" text.
+        if (sentImageCache[m.id]) {
+          bubble.innerHTML = `<img src="${sentImageCache[m.id]}" alt="photo" />`;
+        } else {
+          bubble.innerHTML = '<div class="img-placeholder"></div>';
+        }
         row.appendChild(bubble);
       } else {
         // received: avatar on first of group, spacer otherwise
@@ -227,19 +278,30 @@
           spacer.className = "avatar-spacer";
           row.appendChild(spacer);
         }
-        bubble.innerHTML =
-          `<button class="view-btn" onclick="openImage(${m.id}, this)">View</button>` +
-          `<div class="result"></div>`;
+        // Auto-open: no button, no clicking. Show cached image, or "Opening..."
+        // while it decrypts in the background.
+        if (receivedImageCache[m.id]) {
+          bubble.innerHTML = renderReceivedImage(receivedImageCache[m.id]);
+        } else {
+          bubble.innerHTML =
+            '<div class="loading-inline"><span class="spinner"></span>Opening...</div>';
+          autoOpen(m.id, bubble);
+        }
         row.appendChild(bubble);
       }
       return row;
     }
 
-    async function openImage(id, btn) {
-      const bubble = btn.parentElement;
-      btn.style.display = "none";
-      const result = bubble.querySelector(".result");
-      result.innerHTML = '<div class="loading-inline"><span class="spinner"></span>Opening...</div>';
+    function renderReceivedImage(entry) {
+      const delivered = entry.valid ? '<div class="delivered">✓ Delivered</div>' : "";
+      return `<img src="data:image/jpeg;base64,${entry.b64}" alt="photo" />` + delivered;
+    }
+
+    // Decrypt a received image automatically; cache the result so we never
+    // re-fetch or flicker on re-render.
+    async function autoOpen(id, bubble) {
+      if (decrypting.has(id)) return;
+      decrypting.add(id);
       try {
         const res = await apiFetch("/decrypt-message", {
           method: "POST",
@@ -248,15 +310,17 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          result.innerHTML = '<div class="delivered">Could not open image</div>';
+          if (bubble.isConnected)
+            bubble.innerHTML = '<div class="delivered">Could not open image</div>';
           return;
         }
-        // "✓ Delivered" only when verified; show nothing if not (do not alarm).
-        const delivered = data.signature_valid ? '<div class="delivered">✓ Delivered</div>' : "";
-        result.innerHTML =
-          `<img src="data:image/jpeg;base64,${data.image_base64}" alt="photo" />` + delivered;
+        receivedImageCache[id] = { b64: data.image_base64, valid: data.signature_valid };
+        if (bubble.isConnected) bubble.innerHTML = renderReceivedImage(receivedImageCache[id]);
       } catch (err) {
-        result.innerHTML = '<div class="delivered">Could not open image</div>';
+        if (bubble.isConnected)
+          bubble.innerHTML = '<div class="delivered">Could not open image</div>';
+      } finally {
+        decrypting.delete(id);
       }
     }
 
@@ -311,6 +375,15 @@
       });
     }
 
+    function readAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("read failed"));
+        reader.readAsDataURL(file);
+      });
+    }
+
     // Sending stays non-blocking: the sidebar and other chats remain clickable.
     async function sendImage() {
       if (!activePeer || !pickedFile) return;
@@ -322,6 +395,8 @@
       btn.innerHTML = '<span class="spinner"></span>Sending';
 
       try {
+        // Keep the original image as a data URL so we can show it instantly.
+        const originalDataUrl = await readAsDataURL(fileForThisSend);
         const blob = await compressImage(fileForThisSend);
         const form = new FormData();
         form.append("receiver_username", peerForThisSend);
@@ -332,10 +407,13 @@
           alert(data.detail || "Failed to send, try again");
           return;
         }
+        // Cache the sent image by its new message id and render immediately.
+        if (data.message_id) sentImageCache[data.message_id] = originalDataUrl;
         // reset composer
         pickedFile = null;
         document.getElementById("image-input").value = "";
         field.textContent = "Add a photo to send";
+        loadConversations(); // peer now has history → appears in sidebar
         if (activePeer === peerForThisSend) loadMessages();
       } catch (err) {
         alert("Failed to send, try again");
@@ -353,7 +431,7 @@
         try {
           const data = JSON.parse(event.data);
           if (data.type === "new_message") {
-            loadUsers();
+            loadConversations();
             if (data.from === activePeer) loadMessages();
           }
         } catch (e) {}
@@ -373,9 +451,9 @@
       });
     });
 
-    loadUsers();
+    loadConversations();
     connectWs();
-    setInterval(loadUsers, 15000);
+    setInterval(loadConversations, 15000);
   </script>
 </body>
 </html>

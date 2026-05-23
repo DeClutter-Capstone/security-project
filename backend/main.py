@@ -227,11 +227,37 @@ def logout(user: User = Depends(get_current_user), db: Session = Depends(get_db)
 # --------------------------------------------------------------------------- #
 @app.get("/users")
 def list_users(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    others = db.query(User).filter(User.id != user.id).all()
+    # Used only by the "+" search feature. Admins are never chattable.
+    others = (
+        db.query(User)
+        .filter(User.id != user.id, User.is_admin == False)  # noqa: E712
+        .all()
+    )
     return [
         {"username": u.username, "online": is_online(db, u.id), "is_admin": u.is_admin}
         for u in others
     ]
+
+
+@app.get("/conversations")
+def list_conversations(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Users the current user already has message history with (non-admin)."""
+    msgs = (
+        db.query(Message)
+        .filter((Message.sender_id == user.id) | (Message.receiver_id == user.id))
+        .all()
+    )
+    other_ids = {
+        (m.receiver_id if m.sender_id == user.id else m.sender_id) for m in msgs
+    }
+    if not other_ids:
+        return []
+    others = (
+        db.query(User)
+        .filter(User.id.in_(other_ids), User.is_admin == False)  # noqa: E712
+        .all()
+    )
+    return [{"username": u.username, "online": is_online(db, u.id)} for u in others]
 
 
 # --------------------------------------------------------------------------- #

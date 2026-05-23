@@ -16,6 +16,9 @@
              autocomplete="username" required />
       <input class="field" type="password" id="password" placeholder="Password"
              autocomplete="current-password" required />
+      <input class="field" type="password" id="confirm-password"
+             placeholder="Confirm password" style="display:none" />
+      <div class="error-text" id="confirm-error" style="margin-top:0"></div>
       <button type="submit" class="btn-primary" id="submit-btn">Log in</button>
     </form>
 
@@ -37,6 +40,9 @@
       document.getElementById("toggle").innerHTML = isLogin
         ? `Don't have an account? <span class="link" onclick="toggleMode()">Sign up</span>`
         : `Already have an account? <span class="link" onclick="toggleMode()">Log in</span>`;
+      // Confirm-password field is only shown when registering.
+      document.getElementById("confirm-password").style.display = isLogin ? "none" : "block";
+      document.getElementById("confirm-error").textContent = "";
       setError("");
     }
 
@@ -47,9 +53,20 @@
     async function submitAuth(e) {
       e.preventDefault();
       setError("");
+      document.getElementById("confirm-error").textContent = "";
       const username = document.getElementById("username").value.trim();
       const password = document.getElementById("password").value;
       const btn = document.getElementById("submit-btn");
+
+      // Confirm-password check (frontend validation only).
+      if (mode === "register") {
+        const confirm = document.getElementById("confirm-password").value;
+        if (password !== confirm) {
+          document.getElementById("confirm-error").textContent = "Passwords do not match";
+          return false;
+        }
+      }
+
       btn.disabled = true;
 
       try {

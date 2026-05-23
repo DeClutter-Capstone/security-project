@@ -3,72 +3,70 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>IEA - Login</title>
+  <title>IEA</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <div class="auth-wrap">
-    <div class="brand">
-      <h1>IEA</h1>
-      <p>Private Image Messaging</p>
-    </div>
+<body class="login-page">
+  <div class="login-card">
+    <div class="app-name">IEA</div>
+    <div class="subtitle">Private image messaging</div>
 
-    <div class="card">
-      <div class="tabs">
-        <button id="tab-login" class="active" onclick="showTab('login')">Login</button>
-        <button id="tab-register" onclick="showTab('register')">Register</button>
-      </div>
+    <form id="auth-form" onsubmit="return submitAuth(event)">
+      <input class="field" type="text" id="username" placeholder="Username"
+             autocomplete="username" required />
+      <input class="field" type="password" id="password" placeholder="Password"
+             autocomplete="current-password" required />
+      <button type="submit" class="btn-primary" id="submit-btn">Log in</button>
+    </form>
 
-      <!-- Login form -->
-      <form id="login-form" onsubmit="return doLogin(event)">
-        <label>Username</label>
-        <input type="text" id="login-username" autocomplete="username" required />
-        <label>Password</label>
-        <input type="password" id="login-password" autocomplete="current-password" required />
-        <button type="submit" class="primary">Login</button>
-      </form>
+    <div class="error-text" id="error"></div>
 
-      <!-- Register form -->
-      <form id="register-form" style="display:none" onsubmit="return doRegister(event)">
-        <label>Username</label>
-        <input type="text" id="reg-username" required />
-        <label>Password</label>
-        <input type="password" id="reg-password" required />
-        <button type="submit" class="primary">Create account</button>
-      </form>
-
-      <div id="msg" class="msg"></div>
-
-      <div class="hint">
-        Demo accounts:<br />
-        admin / admin123 &nbsp;•&nbsp; alice / alice123 &nbsp;•&nbsp; bob / bob123
-      </div>
+    <div class="toggle-text" id="toggle">
+      Don't have an account? <span class="link" onclick="toggleMode()">Sign up</span>
     </div>
   </div>
 
   <script src="app.js"></script>
   <script>
-    function showTab(which) {
-      const isLogin = which === "login";
-      document.getElementById("login-form").style.display = isLogin ? "block" : "none";
-      document.getElementById("register-form").style.display = isLogin ? "none" : "block";
-      document.getElementById("tab-login").classList.toggle("active", isLogin);
-      document.getElementById("tab-register").classList.toggle("active", !isLogin);
-      setMsg("");
+    let mode = "login"; // or "register"
+
+    function toggleMode() {
+      mode = mode === "login" ? "register" : "login";
+      const isLogin = mode === "login";
+      document.getElementById("submit-btn").textContent = isLogin ? "Log in" : "Create Account";
+      document.getElementById("toggle").innerHTML = isLogin
+        ? `Don't have an account? <span class="link" onclick="toggleMode()">Sign up</span>`
+        : `Already have an account? <span class="link" onclick="toggleMode()">Log in</span>`;
+      setError("");
     }
 
-    function setMsg(text, kind) {
-      const el = document.getElementById("msg");
-      el.textContent = text;
-      el.className = "msg" + (kind ? " " + kind : "");
+    function setError(text) {
+      document.getElementById("error").textContent = text;
     }
 
-    async function doLogin(e) {
+    async function submitAuth(e) {
       e.preventDefault();
-      setMsg("Logging in...");
-      const username = document.getElementById("login-username").value.trim();
-      const password = document.getElementById("login-password").value;
+      setError("");
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value;
+      const btn = document.getElementById("submit-btn");
+      btn.disabled = true;
+
       try {
+        if (mode === "register") {
+          const res = await fetch("/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            setError(data.detail || "Could not create account");
+            return false;
+          }
+          // Auto-login after successful registration.
+        }
+
         const res = await fetch("/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -76,7 +74,7 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          setMsg(data.detail || "Login failed", "error");
+          setError(data.detail || "Incorrect username or password");
           return false;
         }
         sessionStorage.setItem("session_token", data.session_token);
@@ -84,37 +82,13 @@
         sessionStorage.setItem("is_admin", data.is_admin ? "true" : "false");
         window.location.href = data.is_admin ? "admin.html" : "chat.html";
       } catch (err) {
-        setMsg("Network error", "error");
+        setError("Something went wrong, try again");
+      } finally {
+        btn.disabled = false;
       }
       return false;
     }
 
-    async function doRegister(e) {
-      e.preventDefault();
-      setMsg("Creating account...");
-      const username = document.getElementById("reg-username").value.trim();
-      const password = document.getElementById("reg-password").value;
-      try {
-        const res = await fetch("/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setMsg(data.detail || "Registration failed", "error");
-          return false;
-        }
-        setMsg("Account created! You can log in now.", "ok");
-        showTab("login");
-        document.getElementById("login-username").value = username;
-      } catch (err) {
-        setMsg("Network error", "error");
-      }
-      return false;
-    }
-
-    // If already logged in, skip to the app.
     if (getToken()) {
       window.location.href = isAdmin() ? "admin.html" : "chat.html";
     }

@@ -3,30 +3,45 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>IEA - Chat</title>
+  <title>IEA</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="app">
     <!-- Sidebar -->
     <aside class="sidebar">
-      <div class="sidebar-head">
-        <h2>IEA</h2>
-        <div class="me">Signed in as <strong id="me-name"></strong></div>
+      <div class="sidebar-top">
+        <div class="title">Chats</div>
+        <button class="icon-btn" onclick="toggleSearch()" title="Find someone">+</button>
       </div>
+
+      <div class="search-panel" id="search-panel">
+        <input class="search-input" id="search-input" placeholder="Search username"
+               oninput="onSearch()" />
+        <div class="search-result" id="search-result"></div>
+      </div>
+
       <div class="user-list" id="user-list"></div>
-      <button class="logout-btn" onclick="doLogout()">Logout</button>
+
+      <div class="sidebar-bottom">
+        <span id="me-name"></span>
+        <button class="text-link" onclick="doLogout()">Log out</button>
+      </div>
     </aside>
 
-    <!-- Main chat -->
-    <main class="main">
-      <div class="chat-head" id="chat-head">Select a user to start chatting</div>
+    <!-- Chat area -->
+    <main class="chat">
+      <div class="chat-header" id="chat-header" style="display:none"></div>
       <div class="messages" id="messages">
-        <div class="empty">No conversation selected.</div>
+        <div class="empty-chat">Select a chat to start messaging</div>
       </div>
-      <div class="composer">
-        <input type="file" id="image-input" accept="image/*" />
-        <button id="send-btn" onclick="sendImage()" disabled>Send</button>
+      <div class="composer" id="composer" style="display:none">
+        <input type="file" id="image-input" accept="image/*" style="display:none"
+               onchange="onFilePicked()" />
+        <button class="attach-btn" onclick="document.getElementById('image-input').click()"
+                title="Add a photo">+</button>
+        <div class="composer-field" id="composer-field">Add a photo to send</div>
+        <button class="send-btn" id="send-btn" onclick="sendImage()" disabled>Send</button>
       </div>
     </main>
   </div>
@@ -36,15 +51,39 @@
     requireAuth();
     if (isAdmin()) window.location.href = "admin.html";
 
-    document.getElementById("me-name").textContent = getUsername();
+    const me = getUsername();
+    document.getElementById("me-name").textContent = me;
+
+    const AVATAR_COLORS = ["#f4845f", "#a8c5da", "#b8a9c9", "#92c7a3", "#f0c27f", "#7eb8c9"];
+    const IMG_ICON =
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
 
     let activePeer = null;
+    let usersCache = [];
     let ws = null;
 
-    // ---------------- User list ----------------
+    function avatarColor(name) {
+      let sum = 0;
+      for (const ch of name) sum += ch.charCodeAt(0);
+      return AVATAR_COLORS[sum % 6];
+    }
+
+    function avatarEl(name, size) {
+      return (
+        `<div class="avatar ${size}" style="background:${avatarColor(name)}">` +
+        `${(name[0] || "?").toUpperCase()}</div>`
+      );
+    }
+
+    // ---------------- Sidebar / users ----------------
     async function loadUsers() {
       const res = await apiFetch("/users");
-      const users = await res.json();
+      usersCache = await res.json();
+      renderUserList(usersCache);
+      updateHeaderStatus();
+    }
+
+    function renderUserList(users) {
       const list = document.getElementById("user-list");
       list.innerHTML = "";
       users.forEach((u) => {
@@ -52,18 +91,81 @@
         item.className = "user-item" + (u.username === activePeer ? " active" : "");
         item.onclick = () => selectPeer(u.username);
         item.innerHTML =
-          `<span class="dot ${u.online ? "online" : ""}"></span>` +
-          `<span>${u.username}${u.is_admin ? " (admin)" : ""}</span>`;
+          avatarEl(u.username, "lg") +
+          `<div class="u-text">` +
+          `<div class="u-name">${u.username}</div>` +
+          `<div class="u-sub">Tap to chat</div>` +
+          `</div>` +
+          (u.online ? '<span class="online-dot"></span>' : "");
         list.appendChild(item);
       });
     }
 
+    function peerInfo(username) {
+      return usersCache.find((u) => u.username === username);
+    }
+
     function selectPeer(username) {
       activePeer = username;
-      document.getElementById("chat-head").textContent = "Conversation with " + username;
-      document.getElementById("send-btn").disabled = false;
-      loadUsers();
+      renderUserList(usersCache);
+      const header = document.getElementById("chat-header");
+      header.style.display = "flex";
+      document.getElementById("composer").style.display = "flex";
+      updateHeaderStatus();
       loadMessages();
+    }
+
+    function updateHeaderStatus() {
+      if (!activePeer) return;
+      const info = peerInfo(activePeer);
+      const online = info && info.online;
+      const header = document.getElementById("chat-header");
+      header.innerHTML =
+        avatarEl(activePeer, "sm") +
+        `<div class="ch-text">` +
+        `<div class="ch-name">${activePeer}</div>` +
+        `<div class="ch-status ${online ? "online" : "offline"}">${
+          online ? "Active now" : "Offline"
+        }</div>` +
+        `</div>`;
+    }
+
+    // ---------------- Search ----------------
+    function toggleSearch() {
+      const panel = document.getElementById("search-panel");
+      panel.classList.toggle("open");
+      if (panel.classList.contains("open")) {
+        document.getElementById("search-input").focus();
+      } else {
+        document.getElementById("search-input").value = "";
+        document.getElementById("search-result").innerHTML = "";
+        renderUserList(usersCache);
+      }
+    }
+
+    function onSearch() {
+      const q = document.getElementById("search-input").value.trim().toLowerCase();
+      const result = document.getElementById("search-result");
+      if (!q) {
+        result.innerHTML = "";
+        renderUserList(usersCache);
+        return;
+      }
+      const matches = usersCache.filter((u) => u.username.toLowerCase().includes(q));
+      renderUserList(matches);
+      const exact = usersCache.find((u) => u.username.toLowerCase() === q) || matches[0];
+      if (exact) {
+        result.innerHTML =
+          `<span class="check">✓</span><span>${exact.username}</span>` +
+          `<button class="add-pill" onclick="openFromSearch('${exact.username}')">Add</button>`;
+      } else {
+        result.innerHTML = "No user found";
+      }
+    }
+
+    function openFromSearch(username) {
+      toggleSearch();
+      selectPeer(username);
     }
 
     // ---------------- Messages ----------------
@@ -74,40 +176,70 @@
       const box = document.getElementById("messages");
       box.innerHTML = "";
       if (msgs.length === 0) {
-        box.innerHTML = '<div class="empty">No messages yet. Send an image below.</div>';
+        box.innerHTML = '<div class="empty-chat">No messages yet. Send a photo below.</div>';
         return;
       }
-      msgs.forEach((m) => box.appendChild(renderMessage(m)));
+
+      let prev = null;
+      msgs.forEach((m, i) => {
+        const next = msgs[i + 1] || null;
+        // Date separator when the day changes.
+        const day = m.timestamp ? new Date(m.timestamp).toDateString() : "";
+        const prevDay = prev && prev.timestamp ? new Date(prev.timestamp).toDateString() : null;
+        if (day && day !== prevDay) {
+          const sep = document.createElement("div");
+          sep.className = "date-sep";
+          sep.textContent = day;
+          box.appendChild(sep);
+        }
+
+        const firstInGroup = !prev || prev.sender_username !== m.sender_username || gap(prev, m);
+        const lastInGroup = !next || next.sender_username !== m.sender_username || gap(m, next);
+        box.appendChild(renderMessage(m, firstInGroup, lastInGroup));
+        prev = m;
+      });
       box.scrollTop = box.scrollHeight;
     }
 
-    function renderMessage(m) {
-      const div = document.createElement("div");
-      div.className = "bubble" + (m.is_mine ? " mine" : "");
-      const time = m.timestamp ? new Date(m.timestamp).toLocaleString() : "";
-
-      if (m.is_mine) {
-        div.innerHTML =
-          `Image sent` +
-          `<span class="time">${time}${m.delivered ? " • seen" : ""}</span>`;
-      } else {
-        div.innerHTML =
-          `Image received` +
-          `<br/><button class="decrypt-btn" data-id="${m.id}">View Image</button>` +
-          `<div class="result"></div>` +
-          `<span class="time">${time}</span>`;
-        div.querySelector(".decrypt-btn").onclick = (e) =>
-          openImage(m.id, e.target);
-      }
-      return div;
+    function gap(a, b) {
+      if (!a.timestamp || !b.timestamp) return false;
+      return Math.abs(new Date(b.timestamp) - new Date(a.timestamp)) > 120000; // 2 min
     }
 
-    // Opening one image must not block the rest of the UI: this is a normal
-    // async call, so the sidebar and other conversations stay responsive.
+    function renderMessage(m, firstInGroup, lastInGroup) {
+      const row = document.createElement("div");
+      row.className = "msg-row " + (m.is_mine ? "sent" : "received") + (lastInGroup ? " last" : "");
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble " + (m.is_mine ? "sent" : "received");
+
+      if (m.is_mine) {
+        bubble.innerHTML = `<span class="img-label">${IMG_ICON} Image</span>`;
+        row.appendChild(bubble);
+      } else {
+        // received: avatar on first of group, spacer otherwise
+        if (firstInGroup) {
+          const av = document.createElement("div");
+          av.innerHTML = avatarEl(m.sender_username, "sm");
+          row.appendChild(av.firstChild);
+        } else {
+          const spacer = document.createElement("div");
+          spacer.className = "avatar-spacer";
+          row.appendChild(spacer);
+        }
+        bubble.innerHTML =
+          `<button class="view-btn" onclick="openImage(${m.id}, this)">View</button>` +
+          `<div class="result"></div>`;
+        row.appendChild(bubble);
+      }
+      return row;
+    }
+
     async function openImage(id, btn) {
-      const result = btn.parentElement.querySelector(".result");
+      const bubble = btn.parentElement;
       btn.style.display = "none";
-      result.innerHTML = '<div class="status"><span class="spinner"></span>Opening...</div>';
+      const result = bubble.querySelector(".result");
+      result.innerHTML = '<div class="loading-inline"><span class="spinner"></span>Opening...</div>';
       try {
         const res = await apiFetch("/decrypt-message", {
           method: "POST",
@@ -116,21 +248,29 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          result.innerHTML = '<div class="sig invalid">Could not open image</div>';
+          result.innerHTML = '<div class="delivered">Could not open image</div>';
           return;
         }
-        const status = data.signature_valid
-          ? '<div class="sig valid">✓ Delivered</div>'
-          : '<div class="sig invalid">Could not verify message</div>';
+        // "✓ Delivered" only when verified; show nothing if not (do not alarm).
+        const delivered = data.signature_valid ? '<div class="delivered">✓ Delivered</div>' : "";
         result.innerHTML =
-          `<img src="data:image/jpeg;base64,${data.image_base64}" alt="image" />` + status;
+          `<img src="data:image/jpeg;base64,${data.image_base64}" alt="photo" />` + delivered;
       } catch (err) {
-        result.innerHTML = '<div class="sig invalid">Could not open image</div>';
+        result.innerHTML = '<div class="delivered">Could not open image</div>';
       }
     }
 
-    // Compress an image file to at most ~80KB before sending. Resizes large
-    // images and lowers JPEG quality until it fits. Smaller = faster.
+    // ---------------- Composer / send ----------------
+    let pickedFile = null;
+
+    function onFilePicked() {
+      const input = document.getElementById("image-input");
+      pickedFile = input.files[0] || null;
+      const field = document.getElementById("composer-field");
+      field.textContent = pickedFile ? pickedFile.name : "Add a photo to send";
+      document.getElementById("send-btn").disabled = !pickedFile;
+    }
+
     const MAX_BYTES = 80 * 1024;
     const MAX_DIM = 1024;
 
@@ -150,16 +290,12 @@
           canvas.width = width;
           canvas.height = height;
           canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-
           const tryQuality = (q) => {
             canvas.toBlob(
               (blob) => {
                 if (!blob) return reject(new Error("compress failed"));
-                if (blob.size <= MAX_BYTES || q <= 0.3) {
-                  resolve(blob);
-                } else {
-                  tryQuality(q - 0.1);
-                }
+                if (blob.size <= MAX_BYTES || q <= 0.3) resolve(blob);
+                else tryQuality(q - 0.1);
               },
               "image/jpeg",
               q
@@ -175,38 +311,37 @@
       });
     }
 
-    // ---------------- Send ----------------
-    // Sending must not block the UI: the sidebar and other chats stay clickable
-    // while this runs. We show a spinner only on the composer.
+    // Sending stays non-blocking: the sidebar and other chats remain clickable.
     async function sendImage() {
-      const input = document.getElementById("image-input");
-      if (!activePeer) return alert("Select a user first");
-      if (!input.files.length) return alert("Choose an image first");
-
+      if (!activePeer || !pickedFile) return;
       const btn = document.getElementById("send-btn");
+      const field = document.getElementById("composer-field");
       const peerForThisSend = activePeer;
+      const fileForThisSend = pickedFile;
       btn.disabled = true;
-      btn.innerHTML = '<span class="spinner"></span>Sending...';
+      btn.innerHTML = '<span class="spinner"></span>Sending';
 
       try {
-        const blob = await compressImage(input.files[0]);
+        const blob = await compressImage(fileForThisSend);
         const form = new FormData();
         form.append("receiver_username", peerForThisSend);
         form.append("image", blob, "image.jpg");
-
         const res = await apiFetch("/send-image", { method: "POST", body: form });
         const data = await res.json();
         if (!res.ok) {
           alert(data.detail || "Failed to send, try again");
           return;
         }
-        input.value = "";
+        // reset composer
+        pickedFile = null;
+        document.getElementById("image-input").value = "";
+        field.textContent = "Add a photo to send";
         if (activePeer === peerForThisSend) loadMessages();
       } catch (err) {
         alert("Failed to send, try again");
       } finally {
-        btn.disabled = false;
         btn.textContent = "Send";
+        btn.disabled = !pickedFile;
       }
     }
 
@@ -223,10 +358,7 @@
           }
         } catch (e) {}
       };
-      ws.onclose = () => {
-        // Try to reconnect after a short delay while the page is open.
-        setTimeout(connectWs, 3000);
-      };
+      ws.onclose = () => setTimeout(connectWs, 3000);
     }
 
     function doLogout() {
@@ -234,19 +366,16 @@
     }
 
     window.addEventListener("beforeunload", () => {
-      // Best-effort logout notification on tab close.
-      navigator.sendBeacon &&
-        fetch("/logout", {
-          method: "POST",
-          headers: { Authorization: "Bearer " + getToken() },
-          keepalive: true,
-        });
+      fetch("/logout", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + getToken() },
+        keepalive: true,
+      });
     });
 
-    // Init
     loadUsers();
     connectWs();
-    setInterval(loadUsers, 15000); // refresh online status periodically
+    setInterval(loadUsers, 15000);
   </script>
 </body>
 </html>

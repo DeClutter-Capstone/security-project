@@ -111,6 +111,18 @@ def latest_session(db: Session, user_id: int) -> ActiveSession:
     )
 
 
+def ensure_keypair(db: Session, user: User):
+    """Return (public_key, private_key) for a user, generating and persisting a
+    keypair the first time. Keys persist so offline users can still receive."""
+    if not user.rsa_public_key_hex or not user.rsa_private_key_hex:
+        public_key, private_key = rsa.generate_keypair()
+        user.rsa_public_key_hex = rsa.key_to_hex(public_key)
+        user.rsa_private_key_hex = rsa.key_to_hex(private_key)
+        db.commit()
+        log_audit(db, "KEY_ROTATION", user.id, f"RSA keypair generated for {user.username}")
+    return rsa.hex_to_key(user.rsa_public_key_hex), rsa.hex_to_key(user.rsa_private_key_hex)
+
+
 # --------------------------------------------------------------------------- #
 # Startup: create tables + seed data
 # --------------------------------------------------------------------------- #
@@ -126,11 +138,14 @@ def startup():
                 ("bob", "bob123", False),
             ]
             for username, password, is_admin in seed:
+                pub, priv = rsa.generate_keypair()
                 db.add(
                     User(
                         username=username,
                         password_hash=hash_password(password),
                         is_admin=is_admin,
+                        rsa_public_key_hex=rsa.key_to_hex(pub),
+                        rsa_private_key_hex=rsa.key_to_hex(priv),
                     )
                 )
             db.commit()
@@ -143,12 +158,19 @@ def startup():
 # Auth routes
 # --------------------------------------------------------------------------- #
 @app.post("/register")
-def register(req: RegisterRequest, db: Session = Depends(get_db)):
+async def register(req: RegisterRequest, db: Session = Depends(get_db)):
     if not req.username or not req.password:
         raise HTTPException(status_code=400, detail="Username and password required")
     if db.query(User).filter(User.username == req.username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
-    user = User(username=req.username, password_hash=hash_password(req.password))
+    # Generate the persistent keypair up front (offloaded; keygen blocks).
+    public_key, private_key = await asyncio.to_thread(rsa.generate_keypair)
+    user = User(
+        username=req.username,
+        password_hash=hash_password(req.password),
+        rsa_public_key_hex=rsa.key_to_hex(public_key),
+        rsa_private_key_hex=rsa.key_to_hex(private_key),
+    )
     db.add(user)
     db.commit()
     return {"success": True, "username": req.username}
@@ -160,9 +182,17 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    # Fresh RSA keypair every login. 512-bit prime generation blocks, so run it
-    # in a worker thread to keep the event loop responsive.
-    public_key, private_key = await asyncio.to_thread(rsa.generate_keypair)
+    # Persistent per-user keypair (generated lazily if missing). Generation
+    # blocks, so offload just the keygen to a worker thread; DB writes stay here.
+    if not (user.rsa_public_key_hex and user.rsa_private_key_hex):
+        public_key, private_key = await asyncio.to_thread(rsa.generate_keypair)
+        user.rsa_public_key_hex = rsa.key_to_hex(public_key)
+        user.rsa_private_key_hex = rsa.key_to_hex(private_key)
+        db.commit()
+        log_audit(db, "KEY_ROTATION", user.id, f"RSA keypair generated for {user.username}")
+    else:
+        public_key = rsa.hex_to_key(user.rsa_public_key_hex)
+        private_key = rsa.hex_to_key(user.rsa_private_key_hex)
     token = create_session_token()
 
     db.add(
@@ -174,11 +204,10 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     )
     db.commit()
 
-    # Private key only in memory, never persisted.
+    # Keep the live private key in memory for this session as well.
     SESSION_KEYS[token] = private_key
 
     log_audit(db, "LOGIN", user.id, f"{user.username} logged in")
-    log_audit(db, "KEY_ROTATION", user.id, "Fresh RSA keypair generated")
 
     return {"session_token": token, "username": user.username, "is_admin": user.is_admin}
 
@@ -221,22 +250,10 @@ async def send_image(
     if receiver.id == user.id:
         raise HTTPException(status_code=400, detail="Cannot send to yourself")
 
-    # The receiver's public key lives in their active session. They must be
-    # logged in at least once so a key exists (keys are per-login by design).
-    receiver_session = latest_session(db, receiver.id)
-    if not receiver_session:
-        raise HTTPException(
-            status_code=409,
-            detail="Receiver must be online (no session public key available)",
-        )
-    sender_session = db.query(ActiveSession).filter(
-        ActiveSession.session_token == user._session_token
-    ).first()
-
-    receiver_public_key = rsa.hex_to_key(receiver_session.rsa_public_key_hex)
-    sender_private_key = SESSION_KEYS.get(user._session_token)
-    if sender_private_key is None:
-        raise HTTPException(status_code=401, detail="Session private key missing; re-login")
+    # Persistent keys are always available, so sending NEVER depends on the
+    # receiver being online. Keys are generated lazily if somehow missing.
+    receiver_public_key, _ = ensure_keypair(db, receiver)
+    sender_public_key, sender_private_key = ensure_keypair(db, user)
 
     image_bytes = await image.read()
     if not image_bytes:
@@ -257,14 +274,15 @@ async def send_image(
     # Step 4: sign the DES key with the sender's RSA private key.
     signature = rsa.rsa_sign(des_key, sender_private_key)
 
-    # Step 5: store everything encrypted. Raw image/key never persisted.
+    # Step 5: ALWAYS store the message, online or offline. Raw image/key never
+    # persisted. An offline receiver gets it next time they fetch the thread.
     msg = Message(
         sender_id=user.id,
         receiver_id=receiver.id,
         encrypted_image=encrypted_image,
         encrypted_des_key=encrypted_des_key,
         signature=signature,
-        sender_public_key_hex=sender_session.rsa_public_key_hex,
+        sender_public_key_hex=rsa.key_to_hex(sender_public_key),
     )
     db.add(msg)
     db.commit()
@@ -272,12 +290,13 @@ async def send_image(
 
     log_audit(db, "MESSAGE_SENT", user.id, f"{user.username} -> {receiver.username} (msg {msg.id})")
 
-    # Step 6: notify the receiver over WebSocket if connected.
-    if receiver_session and receiver_session.session_token in manager.active_connections:
-        await manager.send_to_user(
-            receiver_session.session_token,
-            {"type": "new_message", "from": user.username},
-        )
+    # Step 6: best-effort WebSocket notification. If the receiver has any live
+    # connection, push to it; otherwise do nothing (message waits in the DB).
+    for s in db.query(ActiveSession).filter(ActiveSession.user_id == receiver.id).all():
+        if s.session_token in manager.active_connections:
+            await manager.send_to_user(
+                s.session_token, {"type": "new_message", "from": user.username}
+            )
 
     return {"success": True, "message_id": msg.id}
 
@@ -339,9 +358,9 @@ async def decrypt_message(
     if msg.receiver_id != user.id:
         raise HTTPException(status_code=403, detail="You are not the recipient")
 
-    private_key = SESSION_KEYS.get(user._session_token)
-    if private_key is None:
-        raise HTTPException(status_code=401, detail="Session private key missing; re-login")
+    # Use the receiver's persistent private key (works even for messages that
+    # arrived while they were offline / before this login).
+    _, private_key = ensure_keypair(db, user)
 
     # Step 1: recover the DES key with the receiver's private key.
     # Left-pad to 8 bytes in case leading zero bytes were stripped.

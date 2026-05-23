@@ -23,6 +23,11 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Persistent RSA keypair (hex "e:n" / "d:n"). Keys are per-user and reused
+    # across logins so that messages can be sent to offline users and decrypted
+    # after a later login. (See README for the security trade-off this implies.)
+    rsa_public_key_hex = Column(String, nullable=True)
+    rsa_private_key_hex = Column(String, nullable=True)
 
 
 class ActiveSession(Base):

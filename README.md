@@ -19,10 +19,19 @@ symmetric keys.
 
 ## How it works (security flow)
 
-On **login**, the server generates a fresh RSA keypair:
-- The **public key** is stored in the `active_sessions` table (as hex).
-- The **private key** is kept only in server memory (`SESSION_KEYS` dict), never
-  in the database, and is discarded on logout.
+Each user has a **persistent RSA keypair**, generated once at registration (or
+on first login) and stored in the `users` table. Persistent keys are what make
+**offline messaging** possible — a sender can always encrypt to a recipient's
+public key, and the recipient can decrypt later with their private key even
+across logouts and re-logins. The live private key is also held in memory for
+the session (`SESSION_KEYS`), and each login still records a session in
+`active_sessions` for online-status tracking.
+
+> **Security trade-off:** storing the private key server-side (in the DB) is a
+> deliberate simplification so offline async delivery works for this class
+> demo. In production the private key should never be stored in plaintext — it
+> would be unlocked client-side or derived from the user's password, and the
+> server would only ever hold public keys.
 
 **Sending an image (A → B):**
 1. Generate a random 8-byte DES key (`secrets.token_bytes(8)`).
@@ -30,8 +39,10 @@ On **login**, the server generates a fresh RSA keypair:
 3. Encrypt the DES key with **receiver B's RSA public key**.
 4. Sign the DES key with **sender A's RSA private key**.
 5. Store `encrypted_image`, `encrypted_des_key`, `signature` (all bytes) in the
-   `messages` table.
-6. Notify B over WebSocket if online.
+   `messages` table. **This always happens, online or offline** — sending is
+   never gated on the recipient being connected.
+6. Notify B over WebSocket *if* B is connected; otherwise the message simply
+   waits in the database until B next opens the conversation.
 
 **Receiving (B):**
 1. Decrypt the DES key with B's private key.
@@ -39,8 +50,8 @@ On **login**, the server generates a fresh RSA keypair:
    unmodified. The result is shown in the UI (✓ valid / ✗ invalid).
 3. Decrypt the image with DES and display it.
 
-Because RSA keys are per-login, **the receiver must have logged in at least once
-(have an active session)** for a sender to obtain their public key.
+Because keypairs are persistent, B does **not** need to be online when A sends —
+B simply decrypts the waiting message the next time they open the conversation.
 
 ---
 
@@ -137,8 +148,9 @@ On first startup the app creates all tables and **seeds demo users**:
 
 1. Open the app URL in **two different browsers** (or one normal + one private
    window) so each has its own session.
-2. Log in as **alice** in one and **bob** in the other. Both must be logged in so
-   each has a session public key.
+2. Log in as **alice** in one and **bob** in the other. (You can also test
+   offline delivery: send to bob while bob is logged out, then log bob in — the
+   waiting image appears in the conversation.)
 3. As **alice**, click **bob** in the sidebar (green dot = online), choose an
    image, and click **Send**. Alice sees “Image sent”.
 4. As **bob**, the conversation refreshes via WebSocket. Click **View Image** on

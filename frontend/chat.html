@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IEA - Chat</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h2>IEA</h2>
+        <div class="me">Signed in as <strong id="me-name"></strong></div>
+      </div>
+      <div class="user-list" id="user-list"></div>
+      <button class="logout-btn" onclick="doLogout()">Logout</button>
+    </aside>
+
+    <!-- Main chat -->
+    <main class="main">
+      <div class="chat-head" id="chat-head">Select a user to start chatting</div>
+      <div class="messages" id="messages">
+        <div class="empty">No conversation selected.</div>
+      </div>
+      <div class="composer">
+        <input type="file" id="image-input" accept="image/*" />
+        <button id="send-btn" onclick="sendImage()" disabled>Send</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    requireAuth();
+    if (isAdmin()) window.location.href = "admin.html";
+
+    document.getElementById("me-name").textContent = getUsername();
+
+    let activePeer = null;
+    let ws = null;
+
+    // ---------------- User list ----------------
+    async function loadUsers() {
+      const res = await apiFetch("/users");
+      const users = await res.json();
+      const list = document.getElementById("user-list");
+      list.innerHTML = "";
+      users.forEach((u) => {
+        const item = document.createElement("div");
+        item.className = "user-item" + (u.username === activePeer ? " active" : "");
+        item.onclick = () => selectPeer(u.username);
+        item.innerHTML =
+          `<span class="dot ${u.online ? "online" : ""}"></span>` +
+          `<span>${u.username}${u.is_admin ? " (admin)" : ""}</span>`;
+        list.appendChild(item);
+      });
+    }
+
+    function selectPeer(username) {
+      activePeer = username;
+      document.getElementById("chat-head").textContent = "Conversation with " + username;
+      document.getElementById("send-btn").disabled = false;
+      loadUsers();
+      loadMessages();
+    }
+
+    // ---------------- Messages ----------------
+    async function loadMessages() {
+      if (!activePeer) return;
+      const res = await apiFetch("/messages/" + encodeURIComponent(activePeer));
+      const msgs = await res.json();
+      const box = document.getElementById("messages");
+      box.innerHTML = "";
+      if (msgs.length === 0) {
+        box.innerHTML = '<div class="empty">No messages yet. Send an image below.</div>';
+        return;
+      }
+      msgs.forEach((m) => box.appendChild(renderMessage(m)));
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function renderMessage(m) {
+      const div = document.createElement("div");
+      div.className = "bubble" + (m.is_mine ? " mine" : "");
+      const time = m.timestamp ? new Date(m.timestamp).toLocaleString() : "";
+
+      if (m.is_mine) {
+        div.innerHTML =
+          `Image sent` +
+          `<span class="time">${time}${m.delivered ? " • seen" : ""}</span>`;
+      } else {
+        div.innerHTML =
+          `Image received` +
+          `<br/><button class="decrypt-btn" data-id="${m.id}">View Image</button>` +
+          `<div class="result"></div>` +
+          `<span class="time">${time}</span>`;
+        div.querySelector(".decrypt-btn").onclick = (e) =>
+          openImage(m.id, e.target);
+      }
+      return div;
+    }
+
+    // Opening one image must not block the rest of the UI: this is a normal
+    // async call, so the sidebar and other conversations stay responsive.
+    async function openImage(id, btn) {
+      const result = btn.parentElement.querySelector(".result");
+      btn.style.display = "none";
+      result.innerHTML = '<div class="status"><span class="spinner"></span>Opening...</div>';
+      try {
+        const res = await apiFetch("/decrypt-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message_id: id }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          result.innerHTML = '<div class="sig invalid">Could not open image</div>';
+          return;
+        }
+        const status = data.signature_valid
+          ? '<div class="sig valid">✓ Delivered</div>'
+          : '<div class="sig invalid">Could not verify message</div>';
+        result.innerHTML =
+          `<img src="data:image/jpeg;base64,${data.image_base64}" alt="image" />` + status;
+      } catch (err) {
+        result.innerHTML = '<div class="sig invalid">Could not open image</div>';
+      }
+    }
+
+    // Compress an image file to at most ~80KB before sending. Resizes large
+    // images and lowers JPEG quality until it fits. Smaller = faster.
+    const MAX_BYTES = 80 * 1024;
+    const MAX_DIM = 1024;
+
+    function compressImage(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          let { width, height } = img;
+          if (width > MAX_DIM || height > MAX_DIM) {
+            const scale = MAX_DIM / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+
+          const tryQuality = (q) => {
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) return reject(new Error("compress failed"));
+                if (blob.size <= MAX_BYTES || q <= 0.3) {
+                  resolve(blob);
+                } else {
+                  tryQuality(q - 0.1);
+                }
+              },
+              "image/jpeg",
+              q
+            );
+          };
+          tryQuality(0.8);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("load failed"));
+        };
+        img.src = url;
+      });
+    }
+
+    // ---------------- Send ----------------
+    // Sending must not block the UI: the sidebar and other chats stay clickable
+    // while this runs. We show a spinner only on the composer.
+    async function sendImage() {
+      const input = document.getElementById("image-input");
+      if (!activePeer) return alert("Select a user first");
+      if (!input.files.length) return alert("Choose an image first");
+
+      const btn = document.getElementById("send-btn");
+      const peerForThisSend = activePeer;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Sending...';
+
+      try {
+        const blob = await compressImage(input.files[0]);
+        const form = new FormData();
+        form.append("receiver_username", peerForThisSend);
+        form.append("image", blob, "image.jpg");
+
+        const res = await apiFetch("/send-image", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.detail || "Failed to send, try again");
+          return;
+        }
+        input.value = "";
+        if (activePeer === peerForThisSend) loadMessages();
+      } catch (err) {
+        alert("Failed to send, try again");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Send";
+      }
+    }
+
+    // ---------------- WebSocket ----------------
+    function connectWs() {
+      const proto = window.location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${proto}://${window.location.host}/ws/${getToken()}`);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "new_message") {
+            loadUsers();
+            if (data.from === activePeer) loadMessages();
+          }
+        } catch (e) {}
+      };
+      ws.onclose = () => {
+        // Try to reconnect after a short delay while the page is open.
+        setTimeout(connectWs, 3000);
+      };
+    }
+
+    function doLogout() {
+      apiFetch("/logout", { method: "POST" }).finally(logoutLocal);
+    }
+
+    window.addEventListener("beforeunload", () => {
+      // Best-effort logout notification on tab close.
+      navigator.sendBeacon &&
+        fetch("/logout", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + getToken() },
+          keepalive: true,
+        });
+    });
+
+    // Init
+    loadUsers();
+    connectWs();
+    setInterval(loadUsers, 15000); // refresh online status periodically
+  </script>
+</body>
+</html>

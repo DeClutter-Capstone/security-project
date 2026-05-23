@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IEA - Sysadmin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="admin-wrap">
+    <div class="admin-head">
+      <h1>IEA · Sysadmin Panel</h1>
+      <div>
+        <span class="refresh-note">Auto-refresh every 10s · </span>
+        <button class="logout-btn" style="margin:0;display:inline-block" onclick="doLogout()">
+          Logout
+        </button>
+      </div>
+    </div>
+
+    <div class="admin-tabs">
+      <button id="t-users" class="active" onclick="showTab('users')">Users</button>
+      <button id="t-messages" onclick="showTab('messages')">Messages</button>
+      <button id="t-audit" onclick="showTab('audit')">Audit Log</button>
+      <button id="t-sessions" onclick="showTab('sessions')">Active Sessions</button>
+    </div>
+
+    <div class="admin-body" id="body"></div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    requireAuth();
+    if (!isAdmin()) window.location.href = "chat.html";
+
+    let currentTab = "users";
+
+    function showTab(tab) {
+      currentTab = tab;
+      ["users", "messages", "audit", "sessions"].forEach((t) => {
+        document.getElementById("t-" + t).classList.toggle("active", t === tab);
+      });
+      render();
+    }
+
+    function fmt(ts) {
+      return ts ? new Date(ts).toLocaleString() : "";
+    }
+
+    async function render() {
+      const body = document.getElementById("body");
+      try {
+        if (currentTab === "users") {
+          const data = await (await apiFetch("/admin/users")).json();
+          body.innerHTML = table(
+            ["ID", "Username", "Role", "Status", "Joined"],
+            data.map((u) => [
+              u.id,
+              u.username,
+              u.is_admin ? '<span class="badge admin">admin</span>' : "user",
+              u.online
+                ? '<span class="badge on">online</span>'
+                : '<span class="badge off">offline</span>',
+              fmt(u.created_at),
+            ])
+          );
+        } else if (currentTab === "messages") {
+          const data = await (await apiFetch("/admin/messages")).json();
+          body.innerHTML =
+            "<p class='refresh-note' style='margin-bottom:12px'>Metadata only — images and DES keys are never decrypted here.</p>" +
+            table(
+              ["ID", "Sender", "Receiver", "Timestamp", "Delivered"],
+              data.map((m) => [
+                m.id,
+                m.sender,
+                m.receiver,
+                fmt(m.timestamp),
+                m.delivered ? "yes" : "no",
+              ])
+            );
+        } else if (currentTab === "audit") {
+          const data = await (await apiFetch("/admin/audit-log")).json();
+          body.innerHTML = table(
+            ["ID", "Event", "User", "Detail", "Timestamp"],
+            data.map((l) => [l.id, l.event_type, l.username || "—", l.detail, fmt(l.timestamp)])
+          );
+        } else if (currentTab === "sessions") {
+          const data = await (await apiFetch("/admin/active-sessions")).json();
+          body.innerHTML = table(
+            ["Username", "Logged in at"],
+            data.map((s) => [s.username, fmt(s.created_at)])
+          );
+        }
+      } catch (e) {
+        // apiFetch handles 401 redirects; ignore others quietly.
+      }
+    }
+
+    function table(headers, rows) {
+      const head = headers.map((h) => `<th>${h}</th>`).join("");
+      const bodyRows = rows
+        .map((r) => "<tr>" + r.map((c) => `<td>${c}</td>`).join("") + "</tr>")
+        .join("");
+      const emptyRow = `<tr><td colspan="${headers.length}" style="color:var(--muted)">No records.</td></tr>`;
+      return `<table><thead><tr>${head}</tr></thead><tbody>${
+        rows.length ? bodyRows : emptyRow
+      }</tbody></table>`;
+    }
+
+    function doLogout() {
+      apiFetch("/logout", { method: "POST" }).finally(logoutLocal);
+    }
+
+    render();
+    setInterval(render, 10000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IEA - Login</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="brand">
+      <h1>IEA</h1>
+      <p>Private Image Messaging</p>
+    </div>
+
+    <div class="card">
+      <div class="tabs">
+        <button id="tab-login" class="active" onclick="showTab('login')">Login</button>
+        <button id="tab-register" onclick="showTab('register')">Register</button>
+      </div>
+
+      <!-- Login form -->
+      <form id="login-form" onsubmit="return doLogin(event)">
+        <label>Username</label>
+        <input type="text" id="login-username" autocomplete="username" required />
+        <label>Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" required />
+        <button type="submit" class="primary">Login</button>
+      </form>
+
+      <!-- Register form -->
+      <form id="register-form" style="display:none" onsubmit="return doRegister(event)">
+        <label>Username</label>
+        <input type="text" id="reg-username" required />
+        <label>Password</label>
+        <input type="password" id="reg-password" required />
+        <button type="submit" class="primary">Create account</button>
+      </form>
+
+      <div id="msg" class="msg"></div>
+
+      <div class="hint">
+        Demo accounts:<br />
+        admin / admin123 &nbsp;•&nbsp; alice / alice123 &nbsp;•&nbsp; bob / bob123
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    function showTab(which) {
+      const isLogin = which === "login";
+      document.getElementById("login-form").style.display = isLogin ? "block" : "none";
+      document.getElementById("register-form").style.display = isLogin ? "none" : "block";
+      document.getElementById("tab-login").classList.toggle("active", isLogin);
+      document.getElementById("tab-register").classList.toggle("active", !isLogin);
+      setMsg("");
+    }
+
+    function setMsg(text, kind) {
+      const el = document.getElementById("msg");
+      el.textContent = text;
+      el.className = "msg" + (kind ? " " + kind : "");
+    }
+
+    async function doLogin(e) {
+      e.preventDefault();
+      setMsg("Logging in...");
+      const username = document.getElementById("login-username").value.trim();
+      const password = document.getElementById("login-password").value;
+      try {
+        const res = await fetch("/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setMsg(data.detail || "Login failed", "error");
+          return false;
+        }
+        sessionStorage.setItem("session_token", data.session_token);
+        sessionStorage.setItem("username", data.username);
+        sessionStorage.setItem("is_admin", data.is_admin ? "true" : "false");
+        window.location.href = data.is_admin ? "admin.html" : "chat.html";
+      } catch (err) {
+        setMsg("Network error", "error");
+      }
+      return false;
+    }
+
+    async function doRegister(e) {
+      e.preventDefault();
+      setMsg("Creating account...");
+      const username = document.getElementById("reg-username").value.trim();
+      const password = document.getElementById("reg-password").value;
+      try {
+        const res = await fetch("/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setMsg(data.detail || "Registration failed", "error");
+          return false;
+        }
+        setMsg("Account created! You can log in now.", "ok");
+        showTab("login");
+        document.getElementById("login-username").value = username;
+      } catch (err) {
+        setMsg("Network error", "error");
+      }
+      return false;
+    }
+
+    // If already logged in, skip to the app.
+    if (getToken()) {
+      window.location.href = isAdmin() ? "admin.html" : "chat.html";
+    }
+  </script>
+</body>
+</html>

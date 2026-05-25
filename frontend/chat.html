@@ -24,8 +24,25 @@
       <div class="user-list" id="user-list"></div>
 
       <div class="sidebar-bottom">
-        <span id="me-name"></span>
+        <div class="profile-strip" id="profile-strip" onclick="toggleProfile(event)">
+          <span id="me-avatar"></span>
+          <span class="u-name" id="me-name"></span>
+        </div>
         <button class="text-link" onclick="doLogout()">Log out</button>
+      </div>
+
+      <!-- Profile popup -->
+      <div class="profile-popup" id="profile-popup">
+        <div id="pp-avatar"></div>
+        <div class="pp-name" id="pp-name"></div>
+        <div class="divider"></div>
+        <div class="pp-label">Change password</div>
+        <input class="field" type="password" id="pp-new" placeholder="New password" />
+        <input class="field" type="password" id="pp-confirm" placeholder="Confirm password" />
+        <button class="btn-primary" style="margin-top:8px" onclick="updatePassword()">
+          Update Password
+        </button>
+        <div class="pp-message" id="pp-message"></div>
       </div>
     </aside>
 
@@ -64,6 +81,54 @@
 
     const me = getUsername();
     document.getElementById("me-name").textContent = me;
+
+    // Profile strip avatar + popup contents.
+    function setupProfile() {
+      document.getElementById("me-avatar").innerHTML = avatarEl(me, "sm");
+      document.getElementById("pp-name").textContent = me;
+      document.getElementById("pp-avatar").innerHTML =
+        `<div class="avatar" style="width:56px;height:56px;font-size:22px;` +
+        `background:${avatarColor(me)}">${(me[0] || "?").toUpperCase()}</div>`;
+    }
+
+    function toggleProfile(e) {
+      if (e) e.stopPropagation();
+      document.getElementById("profile-popup").classList.toggle("open");
+      document.getElementById("pp-message").textContent = "";
+    }
+
+    async function updatePassword() {
+      const pw = document.getElementById("pp-new").value;
+      const confirm = document.getElementById("pp-confirm").value;
+      const msg = document.getElementById("pp-message");
+      if (!pw || pw !== confirm) {
+        msg.className = "pp-message err";
+        msg.textContent = "Passwords do not match";
+        return;
+      }
+      try {
+        const res = await apiFetch("/update-profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_password: pw }),
+        });
+        if (!res.ok) {
+          msg.className = "pp-message err";
+          msg.textContent = "Could not update password";
+          return;
+        }
+        document.getElementById("pp-new").value = "";
+        document.getElementById("pp-confirm").value = "";
+        msg.className = "pp-message ok";
+        msg.textContent = "Password updated";
+        setTimeout(() => {
+          msg.textContent = "";
+        }, 2000);
+      } catch (err) {
+        msg.className = "pp-message err";
+        msg.textContent = "Could not update password";
+      }
+    }
 
     const AVATAR_COLORS = ["#f4845f", "#a8c5da", "#b8a9c9", "#92c7a3", "#f0c27f", "#7eb8c9"];
     const IMG_ICON =
@@ -118,9 +183,11 @@
     function sidebarUsers() {
       // Merge: conversation users (authoritative online) + added-only users.
       const map = {};
-      conversationUsers.forEach((u) => (map[u.username] = { username: u.username, online: u.online }));
+      conversationUsers.forEach(
+        (u) => (map[u.username] = { username: u.username, online: u.online, unread: u.unread_count || 0 })
+      );
       Object.keys(addedUsers).forEach((name) => {
-        if (!map[name]) map[name] = { username: name, online: !!addedUsers[name].online };
+        if (!map[name]) map[name] = { username: name, online: !!addedUsers[name].online, unread: 0 };
       });
       return Object.values(map);
     }
@@ -136,13 +203,19 @@
         const item = document.createElement("div");
         item.className = "user-item" + (u.username === activePeer ? " active" : "");
         item.onclick = () => selectPeer(u.username);
+        const badge =
+          u.unread > 0
+            ? `<span class="unread-badge">${u.unread > 9 ? "9+" : u.unread}</span>`
+            : u.online
+            ? '<span class="online-dot"></span>'
+            : "";
         item.innerHTML =
           avatarEl(u.username, "lg") +
           `<div class="u-text">` +
           `<div class="u-name">${u.username}</div>` +
           `<div class="u-sub">Tap to chat</div>` +
           `</div>` +
-          (u.online ? '<span class="online-dot"></span>' : "");
+          badge;
         list.appendChild(item);
       });
     }
@@ -156,12 +229,17 @@
 
     function selectPeer(username) {
       activePeer = username;
+      // Immediately clear the unread badge for this conversation in the UI.
+      const conv = conversationUsers.find((u) => u.username === username);
+      if (conv) conv.unread_count = 0;
       renderSidebar();
       const header = document.getElementById("chat-header");
       header.style.display = "flex";
       document.getElementById("composer").style.display = "flex";
       updateHeaderStatus();
       loadMessages();
+      // Tell the backend these messages are now read.
+      apiFetch("/mark-read/" + encodeURIComponent(username), { method: "POST" }).catch(() => {});
     }
 
     function updateHeaderStatus() {
@@ -490,6 +568,20 @@
       if (img) openLightbox(img.src);
     });
 
+    // Close the profile popup when clicking outside it.
+    document.addEventListener("click", (e) => {
+      const popup = document.getElementById("profile-popup");
+      const strip = document.getElementById("profile-strip");
+      if (
+        popup.classList.contains("open") &&
+        !popup.contains(e.target) &&
+        !strip.contains(e.target)
+      ) {
+        popup.classList.remove("open");
+      }
+    });
+
+    setupProfile();
     loadConversations();
     connectWs();
     setInterval(loadConversations, 15000);

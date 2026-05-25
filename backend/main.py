@@ -34,6 +34,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -64,6 +65,7 @@ app.add_middleware(
 )
 
 manager = ConnectionManager()
+scheduler = AsyncIOScheduler()
 
 FRONTEND_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend"
@@ -85,6 +87,10 @@ class LoginRequest(BaseModel):
 
 class DecryptRequest(BaseModel):
     message_id: int
+
+
+class UpdateProfileRequest(BaseModel):
+    new_password: str
 
 
 # --------------------------------------------------------------------------- #
@@ -121,6 +127,30 @@ def ensure_keypair(db: Session, user: User):
         db.commit()
         log_audit(db, "KEY_ROTATION", user.id, f"RSA keypair generated for {user.username}")
     return rsa.hex_to_key(user.rsa_public_key_hex), rsa.hex_to_key(user.rsa_private_key_hex)
+
+
+def rotate_keys():
+    """Background job: every 24h give every user a fresh RSA keypair.
+
+    Old messages become undecryptable after rotation — this is expected.
+    """
+    db = SessionLocal()
+    try:
+        for user in db.query(User).all():
+            public_key, private_key = rsa.generate_keypair()
+            user.rsa_public_key_hex = rsa.key_to_hex(public_key)
+            user.rsa_private_key_hex = rsa.key_to_hex(private_key)
+            db.commit()
+            # Update any active session for this user (in-memory + stored pubkey).
+            for s in db.query(ActiveSession).filter(ActiveSession.user_id == user.id).all():
+                if s.session_token in SESSION_KEYS:
+                    SESSION_KEYS[s.session_token] = private_key
+                s.rsa_public_key_hex = rsa.key_to_hex(public_key)
+            db.commit()
+            log_audit(db, "KEY_ROTATION", user.id, f"24h key rotation for {user.username}")
+        print("[IEA] Completed 24h RSA key rotation for all users")
+    finally:
+        db.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -165,6 +195,10 @@ def startup():
     finally:
         db.close()
 
+    # Rotate every user's RSA keypair every 24 hours.
+    scheduler.add_job(rotate_keys, "interval", hours=24, id="key_rotation", replace_existing=True)
+    scheduler.start()
+
 
 # --------------------------------------------------------------------------- #
 # Auth routes
@@ -194,17 +228,9 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    # Persistent per-user keypair (generated lazily if missing). Generation
-    # blocks, so offload just the keygen to a worker thread; DB writes stay here.
-    if not (user.rsa_public_key_hex and user.rsa_private_key_hex):
-        public_key, private_key = await asyncio.to_thread(rsa.generate_keypair)
-        user.rsa_public_key_hex = rsa.key_to_hex(public_key)
-        user.rsa_private_key_hex = rsa.key_to_hex(private_key)
-        db.commit()
-        log_audit(db, "KEY_ROTATION", user.id, f"RSA keypair generated for {user.username}")
-    else:
-        public_key = rsa.hex_to_key(user.rsa_public_key_hex)
-        private_key = rsa.hex_to_key(user.rsa_private_key_hex)
+    # Keys are created at registration, so never generate them on login.
+    # Just load the existing keypair from the users table.
+    public_key, private_key = ensure_keypair(db, user)  # only generates if somehow missing
     token = create_session_token()
 
     db.add(
@@ -216,7 +242,7 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     )
     db.commit()
 
-    # Keep the live private key in memory for this session as well.
+    # Load the private key into memory for this session.
     SESSION_KEYS[token] = private_key
 
     log_audit(db, "LOGIN", user.id, f"{user.username} logged in")
@@ -269,7 +295,52 @@ def list_conversations(user: User = Depends(get_current_user), db: Session = Dep
         .filter(User.id.in_(other_ids), User.is_admin == False)  # noqa: E712
         .all()
     )
-    return [{"username": u.username, "online": is_online(db, u.id)} for u in others]
+    result = []
+    for u in others:
+        unread = (
+            db.query(Message)
+            .filter(
+                Message.sender_id == u.id,
+                Message.receiver_id == user.id,
+                Message.delivered == False,  # noqa: E712
+            )
+            .count()
+        )
+        result.append(
+            {"username": u.username, "online": is_online(db, u.id), "unread_count": unread}
+        )
+    return result
+
+
+@app.post("/update-profile")
+def update_profile(
+    req: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not req.new_password:
+        raise HTTPException(status_code=400, detail="Password required")
+    user.password_hash = hash_password(req.new_password)
+    db.commit()
+    return {"success": True}
+
+
+@app.post("/mark-read/{other_username}")
+def mark_read(
+    other_username: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    other = db.query(User).filter(User.username == other_username).first()
+    if not other:
+        raise HTTPException(status_code=404, detail="User not found")
+    db.query(Message).filter(
+        Message.sender_id == other.id,
+        Message.receiver_id == user.id,
+        Message.delivered == False,  # noqa: E712
+    ).update({"delivered": True})
+    db.commit()
+    return {"success": True}
 
 
 # --------------------------------------------------------------------------- #

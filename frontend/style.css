@@ -158,6 +158,7 @@ button {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  position: relative; /* anchor for the profile popup */
 }
 
 .sidebar-top {
@@ -325,6 +326,95 @@ button {
   border-radius: 50%;
   background: var(--online-dot);
   flex-shrink: 0;
+}
+
+.unread-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--blue);
+  color: var(--white);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Profile strip + popup */
+.profile-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-strip:hover {
+  opacity: 0.85;
+}
+
+.profile-popup {
+  display: none;
+  position: absolute;
+  bottom: 64px;
+  left: 12px;
+  width: 260px;
+  padding: 20px;
+  background: var(--white);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  z-index: 50;
+}
+
+.profile-popup.open {
+  display: block;
+}
+
+.profile-popup .avatar {
+  margin: 0 auto;
+}
+
+.profile-popup .pp-name {
+  text-align: center;
+  font-weight: 700;
+  font-size: 16px;
+  margin-top: 10px;
+  color: var(--text-primary);
+}
+
+.profile-popup .divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0;
+}
+
+.profile-popup .pp-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.profile-popup .field {
+  margin-bottom: 10px;
+}
+
+.pp-message {
+  font-size: 13px;
+  text-align: center;
+  margin-top: 10px;
+  min-height: 16px;
+}
+
+.pp-message.ok {
+  color: var(--online-dot);
+}
+
+.pp-message.err {
+  color: var(--error);
 }
 
 .sidebar-bottom {

@@ -474,6 +474,66 @@ button {
   max-width: 240px;
   border-radius: 12px;
   margin-top: 4px;
+  cursor: pointer;
+}
+
+/* Lightbox / image viewer */
+.lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox.open {
+  display: flex;
+}
+
+.lightbox-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 92vw;
+  max-height: 92vh;
+}
+
+.lightbox-content img {
+  max-width: 92vw;
+  max-height: 80vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.lightbox-actions a,
+.lightbox-actions button {
+  background: var(--white);
+  color: var(--text-primary);
+  border: none;
+  border-radius: 20px;
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.lightbox-actions a.download {
+  background: var(--blue);
+  color: var(--white);
+}
+
+.lightbox-actions a:hover,
+.lightbox-actions button:hover {
+  opacity: 0.9;
 }
 
 .img-placeholder {

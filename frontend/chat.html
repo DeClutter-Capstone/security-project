@@ -46,6 +46,17 @@
     </main>
   </div>
 
+  <!-- Image viewer (click an image to expand / download) -->
+  <div class="lightbox" id="lightbox" onclick="closeLightbox(event)">
+    <div class="lightbox-content">
+      <img id="lightbox-img" src="" alt="photo" />
+      <div class="lightbox-actions">
+        <a class="download" id="lightbox-download" href="" download="image.jpg">Download</a>
+        <button onclick="closeLightbox()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
   <script>
     requireAuth();
@@ -449,6 +460,34 @@
         headers: { Authorization: "Bearer " + getToken() },
         keepalive: true,
       });
+    });
+
+    // ---------------- Image viewer ----------------
+    // Click any image in the conversation to open it large with a download link.
+    function openLightbox(src) {
+      const ext = src.startsWith("data:image/png") ? "png" : "jpg";
+      document.getElementById("lightbox-img").src = src;
+      const dl = document.getElementById("lightbox-download");
+      dl.href = src;
+      dl.setAttribute("download", "iea-image." + ext);
+      document.getElementById("lightbox").classList.add("open");
+    }
+
+    function closeLightbox(e) {
+      // Ignore clicks on the image itself / download link; close on backdrop or Close.
+      if (e && e.target && e.target.closest && e.target.closest(".lightbox-actions")) return;
+      if (e && e.target && e.target.id === "lightbox-img") return;
+      document.getElementById("lightbox").classList.remove("open");
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") document.getElementById("lightbox").classList.remove("open");
+    });
+
+    // Event delegation: any <img> inside a chat bubble opens the viewer.
+    document.getElementById("messages").addEventListener("click", (e) => {
+      const img = e.target.closest(".bubble img");
+      if (img) openLightbox(img.src);
     });
 
     loadConversations();

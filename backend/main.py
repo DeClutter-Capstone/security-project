@@ -49,7 +49,7 @@ from auth import (
     require_admin,
     verify_password,
 )
-from database import Base, SessionLocal, engine, get_db
+from database import DATABASE_URL, Base, SessionLocal, engine, get_db
 from models import ActiveSession, AuditLog, Message, User
 from ws_manager import ConnectionManager
 
@@ -128,6 +128,18 @@ def ensure_keypair(db: Session, user: User):
 # --------------------------------------------------------------------------- #
 @app.on_event("startup")
 def startup():
+    # Diagnostic: which database is actually in use? On Render the local disk is
+    # ephemeral, so SQLite there means data vanishes on every restart/redeploy.
+    if DATABASE_URL.startswith("postgresql"):
+        print(f"[IEA] Database backend: PostgreSQL ({engine.url.host})")
+    else:
+        print("[IEA] Database backend: SQLite (local file)")
+        if os.environ.get("RENDER"):
+            print(
+                "[IEA] WARNING: running on Render with SQLite — data will NOT "
+                "persist across restarts. DATABASE_URL is not set; connect the "
+                "PostgreSQL database in the Render dashboard."
+            )
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:

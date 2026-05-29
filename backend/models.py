@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models for the IEA application."""
+"""SQLAlchemy ORM models for the application."""
 
 from datetime import datetime
 
@@ -48,6 +48,9 @@ class Message(Base):
     receiver_id = Column(Integer, ForeignKey("users.id"))
     encrypted_image = Column(LargeBinary, nullable=False)
     encrypted_des_key = Column(LargeBinary, nullable=False)
+    # Same DES key, also encrypted with the SENDER's public key, so the sender
+    # can decrypt and view their own sent image later (from any device).
+    encrypted_des_key_sender = Column(LargeBinary, nullable=True)
     signature = Column(LargeBinary, nullable=False)
     # Public key of the sender at send time, so the receiver can verify the
     # signature even after the sender logs out and rotates keys.

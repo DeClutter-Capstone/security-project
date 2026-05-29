@@ -349,11 +349,16 @@
       bubble.className = "bubble " + (m.is_mine ? "sent" : "received");
 
       if (m.is_mine) {
-        // Show the actual sent image (cached from this session). No "Image" text.
+        // Show the just-sent original instantly if we still have it; otherwise
+        // decrypt the sender's own copy from the server (persists after re-login).
         if (sentImageCache[m.id]) {
           bubble.innerHTML = `<img src="${sentImageCache[m.id]}" alt="photo" />`;
+        } else if (receivedImageCache[m.id]) {
+          bubble.innerHTML = `<img src="data:image/jpeg;base64,${receivedImageCache[m.id].b64}" alt="photo" />`;
         } else {
-          bubble.innerHTML = '<div class="img-placeholder"></div>';
+          bubble.innerHTML =
+            '<div class="loading-inline"><span class="spinner"></span>Opening...</div>';
+          autoOpen(m.id, bubble, true);
         }
         row.appendChild(bubble);
       } else {
@@ -374,7 +379,7 @@
         } else {
           bubble.innerHTML =
             '<div class="loading-inline"><span class="spinner"></span>Opening...</div>';
-          autoOpen(m.id, bubble);
+          autoOpen(m.id, bubble, false);
         }
         row.appendChild(bubble);
       }
@@ -386,9 +391,9 @@
       return `<img src="data:image/jpeg;base64,${entry.b64}" alt="photo" />` + delivered;
     }
 
-    // Decrypt a received image automatically; cache the result so we never
-    // re-fetch or flicker on re-render.
-    async function autoOpen(id, bubble) {
+    // Decrypt an image automatically (works for both sent and received copies);
+    // cache the result so we never re-fetch or flicker on re-render.
+    async function autoOpen(id, bubble, isMine) {
       if (decrypting.has(id)) return;
       decrypting.add(id);
       try {
@@ -404,7 +409,12 @@
           return;
         }
         receivedImageCache[id] = { b64: data.image_base64, valid: data.signature_valid };
-        if (bubble.isConnected) bubble.innerHTML = renderReceivedImage(receivedImageCache[id]);
+        if (bubble.isConnected) {
+          // Sent images show just the photo; received also show "✓ Delivered".
+          bubble.innerHTML = isMine
+            ? `<img src="data:image/jpeg;base64,${data.image_base64}" alt="photo" />`
+            : renderReceivedImage(receivedImageCache[id]);
+        }
       } catch (err) {
         if (bubble.isConnected)
           bubble.innerHTML = '<div class="delivered">Could not open image</div>';

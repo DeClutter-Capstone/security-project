@@ -35,6 +35,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import inspect, text
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -171,6 +172,21 @@ def startup():
                 "PostgreSQL database in the Render dashboard."
             )
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight migration: add the sender's DES-key column to an existing
+    # messages table if it predates this feature.
+    try:
+        existing = {c["name"] for c in inspect(engine).get_columns("messages")}
+        if "encrypted_des_key_sender" not in existing:
+            coltype = "BYTEA" if DATABASE_URL.startswith("postgresql") else "BLOB"
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f"ALTER TABLE messages ADD COLUMN encrypted_des_key_sender {coltype}")
+                )
+            print("[IEA] Migrated: added messages.encrypted_des_key_sender")
+    except Exception as e:
+        print(f"[IEA] Column migration skipped: {e}")
+
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
@@ -380,6 +396,10 @@ async def send_image(
     # Step 3: encrypt the DES key with the receiver's RSA public key.
     encrypted_des_key = rsa.rsa_encrypt(des_key, receiver_public_key)
 
+    # Step 3b: also encrypt the DES key with the sender's own public key, so the
+    # sender can later decrypt and view their own sent image.
+    encrypted_des_key_sender = rsa.rsa_encrypt(des_key, sender_public_key)
+
     # Step 4: sign the DES key with the sender's RSA private key.
     signature = rsa.rsa_sign(des_key, sender_private_key)
 
@@ -390,6 +410,7 @@ async def send_image(
         receiver_id=receiver.id,
         encrypted_image=encrypted_image,
         encrypted_des_key=encrypted_des_key,
+        encrypted_des_key_sender=encrypted_des_key_sender,
         signature=signature,
         sender_public_key_hex=rsa.key_to_hex(sender_public_key),
     )
@@ -464,16 +485,25 @@ async def decrypt_message(
     msg = db.query(Message).filter(Message.id == req.message_id).first()
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
-    if msg.receiver_id != user.id:
-        raise HTTPException(status_code=403, detail="You are not the recipient")
+    # Both the receiver and the sender may decrypt: each has their own copy of
+    # the DES key encrypted to their own public key.
+    if user.id == msg.receiver_id:
+        encrypted_key = msg.encrypted_des_key
+    elif user.id == msg.sender_id:
+        encrypted_key = msg.encrypted_des_key_sender
+    else:
+        raise HTTPException(status_code=403, detail="Not your message")
 
-    # Use the receiver's persistent private key (works even for messages that
-    # arrived while they were offline / before this login).
+    if encrypted_key is None:
+        # Older message sent before sender-copies existed.
+        raise HTTPException(status_code=404, detail="No key copy available for you")
+
+    # Use the requester's own persistent private key.
     _, private_key = ensure_keypair(db, user)
 
-    # Step 1: recover the DES key with the receiver's private key.
-    # Left-pad to 8 bytes in case leading zero bytes were stripped.
-    des_key = rsa.rsa_decrypt(msg.encrypted_des_key, private_key).rjust(8, b"\x00")
+    # Step 1: recover the DES key. Left-pad to 8 bytes in case leading zero
+    # bytes were stripped.
+    des_key = rsa.rsa_decrypt(encrypted_key, private_key).rjust(8, b"\x00")
 
     # Step 2: verify the DES key was signed by the sender (unmodified).
     sender_public_key = rsa.hex_to_key(msg.sender_public_key_hex)
@@ -484,11 +514,12 @@ async def decrypt_message(
         des.decrypt_bytes, msg.encrypted_image, des_key.decode("latin-1")
     )
 
-    # Mark delivered and audit.
-    if not msg.delivered:
+    # Mark delivered only when the receiver opens it (not the sender viewing
+    # their own copy), and audit.
+    if user.id == msg.receiver_id and not msg.delivered:
         msg.delivered = True
         db.commit()
-    log_audit(db, "MESSAGE_RECEIVED", user.id, f"{user.username} decrypted msg {msg.id}")
+        log_audit(db, "MESSAGE_RECEIVED", user.id, f"{user.username} decrypted msg {msg.id}")
 
     return {
         "image_base64": base64.b64encode(image_bytes).decode(),

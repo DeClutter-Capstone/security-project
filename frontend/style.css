@@ -48,6 +48,9 @@
   --bg-gradient-bottom: #eef2f9;
   --bg-auth-start: #f7f9fe;
   --bg-auth-end: #eef2f9;
+  --bg-body-gradient: linear-gradient(180deg, var(--bg-gradient-top) 0%, var(--bg-gradient-bottom) 100%);
+  --bg-auth-gradient: radial-gradient(circle at top, var(--primary-soft), transparent 55%),
+    linear-gradient(180deg, var(--bg-auth-start) 0%, var(--bg-auth-end) 100%);
 }
 
 * {
@@ -63,7 +66,7 @@ body {
 
 body {
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: linear-gradient(180deg, var(--bg-gradient-top) 0%, var(--bg-gradient-bottom) 100%);
+  background: var(--bg-body-gradient);
   color: var(--text);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -93,7 +96,7 @@ button:focus-visible,
 
 .label {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
@@ -117,6 +120,12 @@ button:focus-visible,
 
 .helper-link {
   font-size: 12px;
+}
+
+.helper-link[aria-disabled="true"] {
+  opacity: 0.7;
+  cursor: default;
+  pointer-events: none;
 }
 
 .field-group {
@@ -290,8 +299,7 @@ button:focus-visible,
   align-items: center;
   justify-content: center;
   padding: var(--s-6);
-  background: radial-gradient(circle at top, var(--primary-soft), transparent 55%),
-    linear-gradient(180deg, var(--bg-auth-start) 0%, var(--bg-auth-end) 100%);
+  background: var(--bg-auth-gradient);
 }
 
 .auth-layout {
@@ -718,7 +726,7 @@ button:focus-visible,
 .chip {
   padding: 4px 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--primary);
   background: var(--primary-soft);
@@ -1098,7 +1106,7 @@ tr:hover td {
 .badge {
   padding: 2px 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 

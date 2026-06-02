@@ -51,23 +51,12 @@
       <div class="chat-header" id="chat-header" style="display:none"></div>
       <div class="messages" id="messages">
         <div class="empty-chat">
-          <div class="empty-ill" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 4h16v10a4 4 0 0 1-4 4H9l-5 4V4z"></path>
-              <path d="M8 9h8"></path>
-              <path d="M8 13h5"></path>
-            </svg>
-          </div>
-          <div class="empty-title">Start a secure chat</div>
-          <div class="empty-sub">Select a conversation or search for someone to send images.</div>
-          <button class="btn-primary ghost" onclick="toggleSearch()"
-                  aria-label="Open search to find and start a conversation">
-            Find someone
-          </button>
+          <div class="empty-title">Your messages</div>
+          <div class="empty-sub">Pick a chat from the list, or tap + to start a new one.</div>
         </div>
       </div>
       <div class="composer" id="composer" style="display:none">
+        <div class="preview-strip" id="preview-strip"></div>
         <div class="composer-inner">
           <input type="file" id="image-input" accept="image/*" style="display:none"
                  onchange="onFilePicked()" />
@@ -76,6 +65,9 @@
           <div class="composer-field" id="composer-field">Add a photo to send</div>
           <button class="send-btn" id="send-btn" onclick="sendImage()" disabled>Send</button>
         </div>
+      </div>
+      <div class="drop-overlay" id="drop-overlay">
+        <div class="drop-overlay-inner">Drop image to send</div>
       </div>
     </main>
   </div>
@@ -265,15 +257,12 @@
       const online = info && info.online;
       const header = document.getElementById("chat-header");
       header.innerHTML =
-        `<div class="chat-header-inner">` +
         avatarEl(activePeer, "sm") +
         `<div class="ch-text">` +
         `<div class="ch-name">${activePeer}</div>` +
         `<div class="ch-status ${online ? "online" : "offline"}">${
           online ? "Active now" : "Offline"
         }</div>` +
-        `</div>` +
-        `<div class="ch-actions"><span class="chip">Encrypted</span></div>` +
         `</div>`;
     }
 
@@ -461,12 +450,46 @@
     let pickedFile = null;
 
     function onFilePicked() {
-      const input = document.getElementById("image-input");
-      pickedFile = input.files[0] || null;
+      pickedFile = document.getElementById("image-input").files[0] || null;
+      renderPreview();
+    }
+
+    function setPickedFile(file) {
+      if (!file || !file.type.startsWith("image/")) return;
+      pickedFile = file;
+      renderPreview();
+    }
+
+    function clearPicked() {
+      pickedFile = null;
+      document.getElementById("image-input").value = "";
+      renderPreview();
+    }
+
+    function renderPreview() {
+      const strip = document.getElementById("preview-strip");
       const field = document.getElementById("composer-field");
-      field.textContent = pickedFile ? pickedFile.name : "Add a photo to send";
-      field.classList.toggle("active", !!pickedFile);
-      document.getElementById("send-btn").disabled = !pickedFile;
+      const sendBtn = document.getElementById("send-btn");
+      if (!pickedFile) {
+        strip.classList.remove("open");
+        strip.innerHTML = "";
+        field.textContent = "Add a photo to send";
+        field.classList.remove("active");
+        sendBtn.disabled = true;
+        return;
+      }
+      const url = URL.createObjectURL(pickedFile);
+      strip.innerHTML =
+        `<div class="preview-thumb">` +
+        `<img src="${url}" alt="preview" />` +
+        `<button class="preview-x" onclick="clearPicked()" title="Remove">×</button>` +
+        `</div>` +
+        `<div class="preview-meta"><div class="preview-name">${pickedFile.name}</div>` +
+        `<div class="preview-hint">Ready to send</div></div>`;
+      strip.classList.add("open");
+      field.textContent = "Press Send to share";
+      field.classList.add("active");
+      sendBtn.disabled = false;
     }
 
     const MAX_BYTES = 80 * 1024;
@@ -543,11 +566,7 @@
         }
         // Cache the sent image by its new message id and render immediately.
         if (data.message_id) sentImageCache[data.message_id] = originalDataUrl;
-        // reset composer
-        pickedFile = null;
-        document.getElementById("image-input").value = "";
-        field.textContent = "Add a photo to send";
-        field.classList.remove("active");
+        clearPicked();
         loadConversations(); // peer now has history → appears in sidebar
         if (activePeer === peerForThisSend) loadMessages();
       } catch (err) {
@@ -625,6 +644,41 @@
       ) {
         popup.classList.remove("open");
       }
+    });
+
+    // ---------------- Drag & drop image upload ----------------
+    let dragDepth = 0;
+    const dropOverlay = document.getElementById("drop-overlay");
+
+    function showDrop(show) {
+      dropOverlay.classList.toggle("open", show);
+    }
+
+    window.addEventListener("dragenter", (e) => {
+      if (!activePeer || !e.dataTransfer || !e.dataTransfer.types.includes("Files")) return;
+      e.preventDefault();
+      dragDepth++;
+      showDrop(true);
+    });
+    window.addEventListener("dragleave", (e) => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) showDrop(false);
+    });
+    window.addEventListener("dragover", (e) => {
+      if (e.dataTransfer && e.dataTransfer.types.includes("Files")) e.preventDefault();
+    });
+    window.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dragDepth = 0;
+      showDrop(false);
+      if (!activePeer) return;
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) setPickedFile(file);
+    });
+
+    // ESC clears the picked image preview.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && pickedFile) clearPicked();
     });
 
     setupProfile();

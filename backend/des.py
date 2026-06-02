@@ -2,13 +2,7 @@
 #
 # The algorithm is identical to a textbook DES; only the internal
 # representation changed from '0'/'1' character strings to Python integers.
-# 64-bit blocks, 56/48-bit keys and all intermediate values are plain ints,
-# manipulated with shifts, masks and ^.  Public signatures are unchanged:
-#
-#     encrypt_bytes(data: bytes, key_text: str) -> bytes
-#     decrypt_bytes(data: bytes, key_text: str) -> bytes
-#     encrypt_message(message: str, key_text: str) -> str (hex)
-#     decrypt_message(encrypted_hex: str, key_text: str) -> str
+
 
 # Tables for substitutions
 

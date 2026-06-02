@@ -61,7 +61,10 @@
           </div>
           <div class="empty-title">Start a secure chat</div>
           <div class="empty-sub">Select a conversation or search for someone to send images.</div>
-          <button class="btn-primary ghost" onclick="toggleSearch()">Find someone</button>
+          <button class="btn-primary ghost" onclick="toggleSearch()"
+                  aria-label="Open search to find and start a conversation">
+            Find someone
+          </button>
         </div>
       </div>
       <div class="composer" id="composer" style="display:none">
@@ -340,7 +343,8 @@
           `</div>` +
           `<div class="empty-title">No messages yet</div>` +
           `<div class="empty-sub">Send a photo to get the conversation started.</div>` +
-          `<button class="btn-primary ghost" onclick="toggleSearch()">Find someone</button>` +
+          `<button class="btn-primary ghost" onclick="toggleSearch()" ` +
+          `aria-label="Open search to find and start a conversation">Find someone</button>` +
           `</div>`;
         return;
       }

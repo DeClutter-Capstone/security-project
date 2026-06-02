@@ -90,7 +90,8 @@ button:focus-visible,
 .icon-btn:focus-visible,
 .send-btn:focus-visible,
 .attach-btn:focus-visible {
-  outline: none;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 

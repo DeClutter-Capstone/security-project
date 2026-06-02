@@ -50,15 +50,29 @@
     <main class="chat">
       <div class="chat-header" id="chat-header" style="display:none"></div>
       <div class="messages" id="messages">
-        <div class="empty-chat">Select a chat to start messaging</div>
+        <div class="empty-chat">
+          <div class="empty-ill" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4h16v10a4 4 0 0 1-4 4H9l-5 4V4z"></path>
+              <path d="M8 9h8"></path>
+              <path d="M8 13h5"></path>
+            </svg>
+          </div>
+          <div class="empty-title">Start a secure chat</div>
+          <div class="empty-sub">Select a conversation or search for someone to send images.</div>
+          <button class="btn-primary ghost" onclick="toggleSearch()">Start a new chat</button>
+        </div>
       </div>
       <div class="composer" id="composer" style="display:none">
-        <input type="file" id="image-input" accept="image/*" style="display:none"
-               onchange="onFilePicked()" />
-        <button class="attach-btn" onclick="document.getElementById('image-input').click()"
-                title="Add a photo">+</button>
-        <div class="composer-field" id="composer-field">Add a photo to send</div>
-        <button class="send-btn" id="send-btn" onclick="sendImage()" disabled>Send</button>
+        <div class="composer-inner">
+          <input type="file" id="image-input" accept="image/*" style="display:none"
+                 onchange="onFilePicked()" />
+          <button class="attach-btn" onclick="document.getElementById('image-input').click()"
+                  title="Add a photo">+</button>
+          <div class="composer-field" id="composer-field">Add a photo to send</div>
+          <button class="send-btn" id="send-btn" onclick="sendImage()" disabled>Send</button>
+        </div>
       </div>
     </main>
   </div>
@@ -248,12 +262,15 @@
       const online = info && info.online;
       const header = document.getElementById("chat-header");
       header.innerHTML =
+        `<div class="chat-header-inner">` +
         avatarEl(activePeer, "sm") +
         `<div class="ch-text">` +
         `<div class="ch-name">${activePeer}</div>` +
         `<div class="ch-status ${online ? "online" : "offline"}">${
           online ? "Active now" : "Offline"
         }</div>` +
+        `</div>` +
+        `<div class="ch-actions"><span class="chip">Encrypted</span></div>` +
         `</div>`;
     }
 
@@ -311,7 +328,20 @@
       const box = document.getElementById("messages");
       box.innerHTML = "";
       if (msgs.length === 0) {
-        box.innerHTML = '<div class="empty-chat">No messages yet. Send a photo below.</div>';
+        box.innerHTML =
+          `<div class="empty-chat">` +
+          `<div class="empty-ill" aria-hidden="true">` +
+          `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+          `stroke-linecap="round" stroke-linejoin="round">` +
+          `<path d="M4 4h16v10a4 4 0 0 1-4 4H9l-5 4V4z"></path>` +
+          `<path d="M8 9h8"></path>` +
+          `<path d="M8 13h5"></path>` +
+          `</svg>` +
+          `</div>` +
+          `<div class="empty-title">No messages yet</div>` +
+          `<div class="empty-sub">Send a photo to get the conversation started.</div>` +
+          `<button class="btn-primary ghost" onclick="toggleSearch()">Find someone</button>` +
+          `</div>`;
         return;
       }
 
@@ -431,6 +461,7 @@
       pickedFile = input.files[0] || null;
       const field = document.getElementById("composer-field");
       field.textContent = pickedFile ? pickedFile.name : "Add a photo to send";
+      field.classList.toggle("active", !!pickedFile);
       document.getElementById("send-btn").disabled = !pickedFile;
     }
 
@@ -512,6 +543,7 @@
         pickedFile = null;
         document.getElementById("image-input").value = "";
         field.textContent = "Add a photo to send";
+        field.classList.remove("active");
         loadConversations(); // peer now has history → appears in sidebar
         if (activePeer === peerForThisSend) loadMessages();
       } catch (err) {

@@ -7,25 +7,53 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="login-page">
-  <div class="login-card">
-    <div class="app-name">IEA</div>
-    <div class="subtitle">Private image messaging</div>
+  <div class="auth-layout">
+    <div class="auth-glow"></div>
+    <div class="login-card">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l8 4v5c0 5-3.5 9-8 9s-8-4-8-9V7l8-4z"></path>
+          <path d="M9 12l2 2 4-4"></path>
+        </svg>
+      </div>
+      <div class="app-name">IEA</div>
+      <div class="subtitle">Private image messaging</div>
 
-    <form id="auth-form" onsubmit="return submitAuth(event)">
-      <input class="field" type="text" id="username" placeholder="Username"
-             autocomplete="username" required />
-      <input class="field" type="password" id="password" placeholder="Password"
-             autocomplete="current-password" required />
-      <input class="field" type="password" id="confirm-password"
-             placeholder="Confirm password" style="display:none" />
-      <div class="error-text" id="confirm-error" style="margin-top:0"></div>
-      <button type="submit" class="btn-primary" id="submit-btn">Log in</button>
-    </form>
+      <div class="auth-tabs" id="toggle">
+        <button type="button" class="tab-btn active" id="tab-login" onclick="setMode('login')">
+          Log in
+        </button>
+        <button type="button" class="tab-btn" id="tab-register" onclick="setMode('register')">
+          Sign up
+        </button>
+      </div>
 
-    <div class="error-text" id="error"></div>
+      <form id="auth-form" onsubmit="return submitAuth(event)">
+        <div class="field-group">
+          <label class="label" for="username">Username</label>
+          <input class="field" type="text" id="username" placeholder="Username"
+                 autocomplete="username" required />
+        </div>
+        <div class="field-group">
+          <label class="label" for="password">Password</label>
+          <input class="field" type="password" id="password" placeholder="Password"
+                 autocomplete="current-password" required />
+        </div>
+        <div class="helper-row" id="auth-helper">
+          <span class="helper">Use your account password.</span>
+          <span class="text-link helper-link">Forgot password?</span>
+        </div>
+        <div class="field-group" id="confirm-group" style="display:none">
+          <label class="label" for="confirm-password">Confirm password</label>
+          <input class="field" type="password" id="confirm-password"
+                 placeholder="Confirm password" autocomplete="new-password" />
+        </div>
+        <div class="error-text" id="confirm-error" style="margin-top:0"></div>
+        <button type="submit" class="btn-primary" id="submit-btn">Log in</button>
+      </form>
 
-    <div class="toggle-text" id="toggle">
-      Don't have an account? <span class="link" onclick="toggleMode()">Sign up</span>
+      <div class="error-text" id="error"></div>
     </div>
   </div>
 
@@ -33,17 +61,20 @@
   <script>
     let mode = "login"; // or "register"
 
-    function toggleMode() {
-      mode = mode === "login" ? "register" : "login";
+    function setMode(nextMode) {
+      mode = nextMode;
       const isLogin = mode === "login";
       document.getElementById("submit-btn").textContent = isLogin ? "Log in" : "Create Account";
-      document.getElementById("toggle").innerHTML = isLogin
-        ? `Don't have an account? <span class="link" onclick="toggleMode()">Sign up</span>`
-        : `Already have an account? <span class="link" onclick="toggleMode()">Log in</span>`;
-      // Confirm-password field is only shown when registering.
-      document.getElementById("confirm-password").style.display = isLogin ? "none" : "block";
+      document.getElementById("confirm-group").style.display = isLogin ? "none" : "block";
+      document.getElementById("auth-helper").style.display = isLogin ? "flex" : "none";
+      document.getElementById("tab-login").classList.toggle("active", isLogin);
+      document.getElementById("tab-register").classList.toggle("active", !isLogin);
       document.getElementById("confirm-error").textContent = "";
       setError("");
+    }
+
+    function toggleMode() {
+      setMode(mode === "login" ? "register" : "login");
     }
 
     function setError(text) {

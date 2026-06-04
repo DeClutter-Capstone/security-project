@@ -103,10 +103,13 @@ def log_audit(db: Session, event_type: str, user_id, detail: str):
 
 
 def is_online(db: Session, user_id: int) -> bool:
-    return (
-        db.query(ActiveSession).filter(ActiveSession.user_id == user_id).first()
-        is not None
+    # "Online" = has at least one live WebSocket connection right now.
+    tokens = (
+        db.query(ActiveSession.session_token)
+        .filter(ActiveSession.user_id == user_id)
+        .all()
     )
+    return any(t[0] in manager.active_connections for t in tokens)
 
 
 def latest_session(db: Session, user_id: int) -> ActiveSession:
@@ -617,6 +620,8 @@ def admin_active_sessions(admin: User = Depends(require_admin), db: Session = De
     sessions = db.query(ActiveSession).order_by(ActiveSession.created_at.desc()).all()
     out = []
     for s in sessions:
+        if s.session_token not in manager.active_connections:
+            continue
         u = db.query(User).filter(User.id == s.user_id).first()
         out.append(
             {
